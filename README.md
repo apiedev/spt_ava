@@ -1,3 +1,8 @@
+## Dependencies
+
+Tarkov - https://www.escapefromtarkov.com/
+SPTarkov - https://www.sp-tarkov.com/#download
+
 ## Description
 
 Ava is a custom modded trader added to SPTarkov with the sole purpose of selling British armaments like the Lee Enfield.
