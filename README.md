@@ -1,6 +1,6 @@
 ## Dependencies
 
-Tarkov - https://www.escapefromtarkov.com/
+Tarkov - https://www.escapefromtarkov.com/  
 SPTarkov - https://www.sp-tarkov.com/#download
 
 ## Description
