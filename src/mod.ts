@@ -1,4 +1,6 @@
 import { DependencyContainer } from "tsyringe";
+
+// SPT types
 import { IPreAkiLoadMod } from "@spt-aki/models/external/IPreAkiLoadMod";
 import { IPostDBLoadMod } from "@spt-aki/models/external/IPostDBLoadMod";
 import { ILogger } from "@spt-aki/models/spt/utils/ILogger";
@@ -7,160 +9,126 @@ import { DatabaseServer } from "@spt-aki/servers/DatabaseServer";
 import { ImageRouter } from "@spt-aki/routers/ImageRouter";
 import { ConfigServer } from "@spt-aki/servers/ConfigServer";
 import { ConfigTypes } from "@spt-aki/models/enums/ConfigTypes";
-import { ITraderAssort, ITraderBase } from "@spt-aki/models/eft/common/tables/ITrader";
-import { ITraderConfig, UpdateTime } from "@spt-aki/models/spt/config/ITraderConfig";
+import { ITraderConfig } from "@spt-aki/models/spt/config/ITraderConfig";
+import { IRagfairConfig } from "@spt-aki/models/spt/config/IRagfairConfig";
 import { JsonUtil } from "@spt-aki/utils/JsonUtil";
-import { IDatabaseTables } from "@spt-aki/models/spt/server/IDatabaseTables";
-import { Traders } from "@spt-aki/models/enums/Traders";
+
+// New trader settings
 import * as baseJson from "../db/base.json";
-import * as assortJson from "../db/assort.json";
-import * as path from "path";
+import { TraderHelper } from "./traderHelpers";
+import { FluentAssortConstructor } from "./fluentTraderAssortCreator";
+import { Money } from "@spt-aki/models/enums/Money";
+import { Traders } from "@spt-aki/models/enums/Traders";
+import { HashUtil } from "@spt-aki/utils/HashUtil";
 
-const fs = require('fs');
-const modPath = path.normalize(path.join(__dirname, '..'));
+class SampleTrader implements IPreAkiLoadMod, IPostDBLoadMod
+{
+    private readonly mod: string
+    private logger: ILogger
+    private traderHelper: TraderHelper
+    private fluentTraderAssortHelper: FluentAssortConstructor
 
-class Ava implements IPreAkiLoadMod, IPostDBLoadMod {
-    mod: string
-    logger: ILogger
-    private configServer: ConfigServer
-    private ragfairConfig: IRagfairConfig
-
-    constructor() {
-        this.mod = "spt_ava"
+    constructor() 
+    {
+        this.mod = "spt_ava"; // Set name of mod, so we can log it to console later
     }
 
-    public preAkiLoad(container: DependencyContainer): void {
-        this.logger = container.resolve<ILogger>("WinstonLogger")
+    /**
+     * Some work needs to be done prior to SPT code being loaded, registering the profile image + setting trader update time inside the trader config json
+     * @param container Dependency container
+     */
+    public preAkiLoad(container: DependencyContainer): void
+    {
+        // Get a logger
+        this.logger = container.resolve<ILogger>("WinstonLogger");
+        this.logger.debug(`[${this.mod}] preAki Loading... `);
+        this.logger.log("Ava is finishing brewing her tea and will be with you shortly.", "italic blue");
 
-        const preAkiModLoader: PreAkiModLoader = container.resolve<PreAkiModLoader>("PreAkiModLoader")
-        const imageRouter: ImageRouter = container.resolve<ImageRouter>("ImageRouter")
-        const configServer = container.resolve<ConfigServer>("ConfigServer")
-        const traderConfig: ITraderConfig = configServer.getConfig<ITraderConfig>(ConfigTypes.TRADER)
-        
-        this.registerProfileImage(preAkiModLoader, imageRouter)
-        
-        this.setupTraderUpdateTime(traderConfig)
-        
-        Traders["AVA"] = "AVA"
+        // Get SPT code/data we need later
+        const preAkiModLoader: PreAkiModLoader = container.resolve<PreAkiModLoader>("PreAkiModLoader");
+        const imageRouter: ImageRouter = container.resolve<ImageRouter>("ImageRouter");
+        const hashUtil: HashUtil = container.resolve<HashUtil>("HashUtil");
+        const configServer = container.resolve<ConfigServer>("ConfigServer");
+        const traderConfig: ITraderConfig = configServer.getConfig<ITraderConfig>(ConfigTypes.TRADER);
+        const ragfairConfig = configServer.getConfig<IRagfairConfig>(ConfigTypes.RAGFAIR);
+
+        // Create helper class and use it to register our traders image/icon + set its stock refresh time
+        this.traderHelper = new TraderHelper();
+        this.fluentTraderAssortHelper = new FluentAssortConstructor(hashUtil, this.logger);
+        this.traderHelper.registerProfileImage(baseJson, this.mod, preAkiModLoader, imageRouter, "cat.jpg");
+        this.traderHelper.setTraderUpdateTime(traderConfig, baseJson, 3600);
+
+        // Add trader to trader enum
+        Traders[baseJson._id] = baseJson._id;
+
+        // Add trader to flea market
+        ragfairConfig.traders[baseJson._id] = true;
+
+        this.logger.log("Ava is ready to sell you british armaments.", "italic blue");
+        this.logger.debug(`[${this.mod}] preAki Loaded`);
     }
     
-    public postDBLoad(container: DependencyContainer): void {
+    /**
+     * Majority of trader-related work occurs after the aki database has been loaded but prior to SPT code being run
+     * @param container Dependency container
+     */
+    public postDBLoad(container: DependencyContainer): void
+    {
         this.logger.debug(`[${this.mod}] postDb Loading... `);
 
-        this.configServer = container.resolve("ConfigServer")
-        this.ragfairConfig = this.configServer.getConfig(ConfigTypes.RAGFAIR)
+        // Resolve SPT classes we'll use
+        const databaseServer: DatabaseServer = container.resolve<DatabaseServer>("DatabaseServer");
+        container.resolve<ConfigServer>("ConfigServer");
+        const jsonUtil: JsonUtil = container.resolve<JsonUtil>("JsonUtil");
 
-        const logger = container.resolve("WinstonLogger");
-        logger.log("Ava is finishing brewing her tea and will be with you shortly.", "italic blue");
+        // Get a reference to the database tables
+        const tables = databaseServer.getTables();
 
-        const databaseServer: DatabaseServer = container.resolve<DatabaseServer>("DatabaseServer")
-        const configServer: ConfigServer = container.resolve<ConfigServer>("ConfigServer")
-        const imageRouter: ImageRouter = container.resolve<ImageRouter>("ImageRouter")
-        const traderConfig: ITraderConfig = configServer.getConfig(ConfigTypes.TRADER)
-        const jsonUtil: JsonUtil = container.resolve<JsonUtil>("JsonUtil")
-        const tables = databaseServer.getTables()
+        // Add new trader to the trader dictionary in DatabaseServer - has no assorts (items) yet
+        this.traderHelper.addTraderToDb(baseJson, tables, jsonUtil);
 
-        this.addTraderToDb(baseJson, tables, jsonUtil)
-        this.addTraderToLocales(tables, baseJson.name, "Ava", baseJson.nickname, baseJson.location, "Ava is ex-British military turned weapons dealer willing to sell old and new products for a quick buck.")
-        this.ragfairConfig.traders[baseJson._id] = true
+        // Add milk
+        const milkID = "575146b724597720a27126d5"; // Can find item ids in `database\templates\items.json` or with https://db.sp-tarkov.com/search
+        this.fluentTraderAssortHelper.createSingleAssortItem(milkID)
+            .addStackCount(200)
+            .addBuyRestriction(10)
+            .addMoneyCost(Money.ROUBLES, 2000)
+            .addLoyaltyLevel(1)
+            .export(tables.traders[baseJson._id]);
+
+        // Add 3x bitcoin + salewa for milk barter
+        const bitcoinID = "59faff1d86f7746c51718c9c"
+        const salewaID = "544fb45d4bdc2dee738b4568";
+        this.fluentTraderAssortHelper.createSingleAssortItem(milkID)
+            .addStackCount(100)
+            .addBarterCost(bitcoinID, 3)
+            .addBarterCost(salewaID, 1)
+            .addLoyaltyLevel(1)
+            .export(tables.traders[baseJson._id]);
+
+
+        // Add glock as money purchase
+        this.fluentTraderAssortHelper.createComplexAssortItem(this.traderHelper.createGlock())
+            .addUnlimitedStackCount()
+            .addMoneyCost(Money.ROUBLES, 20000)
+            .addBuyRestriction(3)
+            .addLoyaltyLevel(1)
+            .export(tables.traders[baseJson._id]);
+
+        // Add mp133 preset as mayo barter
+        this.fluentTraderAssortHelper.createComplexAssortItem(tables.globals.ItemPresets["584148f2245977598f1ad387"]._items)
+            .addStackCount(200)
+            .addBarterCost("5bc9b156d4351e00367fbce9", 1)
+            .addBuyRestriction(3)
+            .addLoyaltyLevel(1)
+            .export(tables.traders[baseJson._id]);
+
+        // Add trader to locale file, ensures trader text shows properly on screen
+        // WARNING: adds the same text to ALL locales (e.g. chinese/french/english)
+        this.traderHelper.addTraderToLocales(baseJson, tables, baseJson.name, "Cat", baseJson.nickname, baseJson.location, "This is the cat shop");
 
         this.logger.debug(`[${this.mod}] postDb Loaded`);
-        logger.log("Ava is ready to sell you british armaments.", "italic blue");
-    }
-
-    private registerProfileImage(preAkiModLoader: PreAkiModLoader, imageRouter: ImageRouter): void {
-        const imageFilepath = `./${preAkiModLoader.getModPath(this.mod)}res`
-
-        imageRouter.addRoute(baseJson.avatar.replace(".jpg", ""), `${imageFilepath}/Ava.jpg`)
-    }
-
-    private setupTraderUpdateTime(traderConfig: ITraderConfig): void {
-        const traderRefreshRecord: UpdateTime = { traderId: baseJson._id, seconds: 3600 }
-        
-        traderConfig.updateTime.push(traderRefreshRecord)
-    }
-    
-    private addTraderToDb(traderDetailsToAdd: any, tables: IDatabaseTables, jsonUtil: JsonUtil): void {
-        tables.traders[traderDetailsToAdd._id] = {
-            assort: jsonUtil.deserialize(jsonUtil.serialize(assortJson)) as ITraderAssort,
-            base: jsonUtil.deserialize(jsonUtil.serialize(traderDetailsToAdd)) as ITraderBase,
-            questassort: {
-                started: {},
-                success: {},
-                fail: {}
-            }
-        }
-    }
-    
-    private addTraderToLocales(tables: IDatabaseTables, fullName: string, firstName: string, nickName: string, location: string, description: string) {
-        const locales = Object.values(tables.locales.global) as Record<string, string>[]
-        for (const locale of locales) {
-            locale[`${baseJson._id} FullName`] = fullName
-            locale[`${baseJson._id} FirstName`] = firstName
-            locale[`${baseJson._id} Nickname`] = nickName
-            locale[`${baseJson._id} Location`] = location
-            locale[`${baseJson._id} Description`] = description
-        }
-    }
-
-    public loadFiles(dirPath, extName, cb) {
-        if (!fs.existsSync(dirPath)) return
-        const dir = fs.readdirSync(dirPath, { withFileTypes: true })
-        dir.forEach(item => {
-            const itemPath = path.normalize(`${dirPath}/${item.name}`)
-            if (item.isDirectory()) this.loadFiles(itemPath, extName, cb)
-            else if (extName.includes(path.extname(item.name))) cb(itemPath)
-        });
-    }
-
-    public importQuests(tables) {
-        let questCount = 0
-
-        this.loadFiles(`${modPath}/db/quests/`, [".json"], function(filePath) {
-            const item = require(filePath)
-            if (Object.keys(item).length < 1) return 
-            for (const quest in item) {
-                tables.templates.quests[quest] = item[quest]
-                questCount++
-            }
-        })
-    }
-
-    public importQuestLocales(tables) {
-        const serverLocales = ['ch','cz','en','es','es-mx','fr','ge','hu','it','jp','pl','po','ru','sk','tu']
-        const addedLocales = {}
-
-        for (const locale of serverLocales) {
-            this.loadFiles(`${modPath}/db/locales/${locale}`, [".json"], function(filePath) {
-                const localeFile = require(filePath)
-                if (Object.keys(localeFile).length < 1) return
-                for (const currentItem in localeFile) {
-                    tables.locales.global[locale][currentItem] = localeFile[currentItem]
-                    if (!Object.keys(addedLocales).includes(locale)) addedLocales[locale] = {}
-                    addedLocales[locale][currentItem] = localeFile[currentItem]
-                }
-            })
-        }
-
-        for (const locale of serverLocales) {
-            if (locale == "en") continue
-            for (const englishItem in addedLocales["en"]) {
-                if (locale in addedLocales) { 
-                    if (englishItem in addedLocales[locale]) continue
-                }
-                if (tables.locales.global[locale] != undefined) tables.locales.global[locale][englishItem] = addedLocales["en"][englishItem]
-            }
-        }
-    }
-
-    public routeQuestImages(imageRouter) {
-        let imageCount = 0
-
-        this.loadFiles(`${modPath}/res/quests/`, [".png", ".jpg"], function(filePath) {
-            imageRouter.addRoute(`/files/quest/icon/${path.basename(filePath, path.extname(filePath))}`, filePath);
-            imageCount++
-        })
     }
 }
 
-module.exports = { mod: new Ava() }
+module.exports = { mod: new SampleTrader() }
